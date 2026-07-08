@@ -1,4 +1,4 @@
-"""Provider 平台插件基类。"""
+"""Provider 通用插件基类。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any, ClassVar, Iterable
 
+from provider_sdk.components import collect_components
 from provider_sdk.config import (
     PluginConfigBase,
     build_plugin_default_config,
@@ -14,30 +15,31 @@ from provider_sdk.config import (
     validate_plugin_config,
 )
 from provider_sdk.context import PluginContext
-from provider_sdk.platform import PlatformAdapter
 from provider_sdk.types import CONFIG_RELOAD_SCOPE_SELF
 
-__all__ = ["ProviderPlugin", "get_platform_adapter", "is_platform_plugin"]
+__all__ = ["ProviderPlugin", "is_provider_plugin"]
 
 
 class ProviderPlugin:
-    """SDK 平台插件基类。
+    """SDK 插件基类 — 对标 maibot-sdk 的 ``MaiBotPlugin``。
+
+    通用插件通过 ``@Route`` / ``@Hook`` / ``@API`` 向 Host 声明能力。
+    平台适配器是**可选扩展**，见 ``provider_sdk.extensions.platform``。
 
     用法示例::
 
-        class EchoPlugin(ProviderPlugin, PlatformAdapter):
-            @property
-            def name(self) -> str:
-                return "echo"
+        from provider_sdk import ProviderPlugin, Route, Hook
 
+        class HelloPlugin(ProviderPlugin):
             async def on_load(self) -> None:
-                self.ctx.logger.info("echo 插件已加载")
+                self.ctx.logger.info("hello")
 
-            async def init(self, session):
-                ...
+            @Route("/plugins/hello", methods=["GET"])
+            async def hello(self) -> dict:
+                return {"ok": True}
 
-        def create_plugin() -> EchoPlugin:
-            return EchoPlugin()
+        def create_plugin() -> HelloPlugin:
+            return HelloPlugin()
     """
 
     config_reload_subscriptions: ClassVar[Iterable[str]] = ()
@@ -123,11 +125,15 @@ class ProviderPlugin:
             return self._ctx.logger
         return logging.getLogger("provider_sdk.plugin")
 
+    def get_components(self) -> list[dict[str, Any]]:
+        """收集装饰器声明的组件 — Runner 加载后自动调用。"""
+        return collect_components(self)
+
     async def on_load(self) -> None:
-        """插件加载完成后的生命周期钩子。"""
+        """插件加载完成。"""
 
     async def on_unload(self) -> None:
-        """插件卸载前的生命周期钩子。"""
+        """插件卸载前。"""
 
     async def on_config_update(
         self,
@@ -135,38 +141,11 @@ class ProviderPlugin:
         config_data: dict[str, object],
         version: str,
     ) -> None:
-        """配置热重载回调。
-
-        ``scope`` 为 ``self`` 时表示插件自身 ``config.toml`` 变更。
-        """
         if scope == CONFIG_RELOAD_SCOPE_SELF:
             self.set_plugin_config(dict(config_data))
         del version
 
 
-def is_platform_plugin(instance: Any) -> bool:
-    """判断对象是否为合法的 Provider 平台插件。"""
+def is_provider_plugin(instance: Any) -> bool:
+    """判断对象是否为合法 Provider 插件。"""
     return isinstance(instance, ProviderPlugin)
-
-
-def get_platform_adapter(plugin: ProviderPlugin) -> PlatformAdapter:
-    """从插件实例提取平台适配器。
-
-    插件类可同时继承 :class:`PlatformAdapter`；否则必须实现
-    ``get_adapter()`` 并返回适配器实例。
-
-    Raises:
-        TypeError: 插件未提供平台适配器。
-    """
-    if isinstance(plugin, PlatformAdapter):
-        return plugin
-
-    getter = getattr(plugin, "get_adapter", None)
-    if callable(getter):
-        adapter = getter()
-        if isinstance(adapter, PlatformAdapter):
-            return adapter
-
-    raise TypeError(
-        f"插件 {type(plugin).__name__} 必须继承 PlatformAdapter 或实现 get_adapter()"
-    )

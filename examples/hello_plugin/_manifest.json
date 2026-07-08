@@ -1,0 +1,12 @@
+{
+  "manifest_version": 1,
+  "id": "provider-sdk.hello-plugin",
+  "name": "Hello 示例插件",
+  "version": "0.1.0",
+  "description": "演示 Route / Hook / API 声明的通用插件",
+  "plugin_type": "general",
+  "author": { "name": "provider-sdk" },
+  "sdk": { "min_version": "0.2.0", "max_version": "0.99.99" },
+  "dependencies": [],
+  "capabilities": ["config.get_plugin"]
+}

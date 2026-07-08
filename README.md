@@ -1,74 +1,60 @@
 # provider-sdk
 
-Provider-V2 平台插件 SDK。对标 [maibot-plugin-sdk](https://github.com/Mai-with-u/maibot-plugin-sdk) 的插件契约，为第三方**平台适配器**提供独立开发与加载能力。
+Provider-V2 **通用插件 SDK**，对标 [maibot-plugin-sdk](https://github.com/Mai-with-u/maibot-plugin-sdk)。
+
+平台适配器只是可选扩展（`extensions.platform`），不是 SDK 核心。
 
 ## 安装
 
 ```bash
-pip install -e X:\Project\provider-sdk
+pip install provider-sdk
 ```
 
 ## 快速开始
 
-在 Provider Host 的 `plugins/` 目录下创建插件文件夹：
-
 ```
 plugins/
-  my_platform/
+  my_plugin/
     _manifest.json
     plugin.py
-    config.toml          # 可选，由 Host 管理
 ```
 
-`plugin.py` 最小示例见 [`examples/echo_platform/plugin.py`](examples/echo_platform/plugin.py)。
-
 ```python
-from provider_sdk import ProviderPlugin, PlatformAdapter, Candidate, make_id
+from provider_sdk import ProviderPlugin, Route, Hook, API
 
-class MyPlugin(ProviderPlugin, PlatformAdapter):
-    @property
-    def name(self) -> str:
-        return "my_platform"
-
+class MyPlugin(ProviderPlugin):
     async def on_load(self) -> None:
         self.ctx.logger.info("loaded")
 
-    async def init(self, session): ...
-    async def candidates(self) -> list[Candidate]: ...
-    async def ensure_candidates(self, count: int) -> int: ...
-    async def complete(self, candidate, messages, model, stream, **kw): ...
-    async def close(self) -> None: ...
+    @Route("/plugins/my/status", methods=["GET"])
+    async def status(self) -> dict:
+        return {"ok": True}
 
 def create_plugin() -> MyPlugin:
     return MyPlugin()
 ```
 
-## 与 MaiBot SDK 的对应关系
+## 与 maibot-sdk 的对应
 
-| MaiBot | provider-sdk |
-|--------|----------------|
+| maibot-sdk | provider-sdk |
+|------------|--------------|
 | `MaiBotPlugin` | `ProviderPlugin` |
-| `create_plugin()` | `create_plugin()` |
-| `_manifest.json` | `_manifest.json` |
-| `on_load` / `on_unload` / `on_config_update` | 相同 |
-| `self.ctx.send` / `gateway` 等 | `self.ctx.config` / `http` / `logger` |
-| `@Tool` / `@Command` | 平台插件以 `PlatformAdapter` 能力为主 |
+| `@Tool` / `@Command` / `@API` | `@Route` / `@Hook` / `@API` |
+| `create_plugin()` + `_manifest.json` | 相同 |
+| `self.ctx.*` 能力代理 | `logger` / `config` / `http` |
+| `@MessageGateway` | 无（Provider 非 IM Bot） |
+| 平台相关 | `extensions.platform.PlatformAdapter`（可选） |
 
-## Host 集成
+## 插件类型
 
-```python
-from pathlib import Path
-from provider_sdk.integrate import load_platform_plugins, register_loaded_plugins
+| `plugin_type` | 说明 |
+|---------------|------|
+| `general`（默认） | 通用插件，声明 Route/Hook/API |
+| `platform` | 额外提供 `PlatformAdapter`，供网关注册 |
 
-loaded = await load_platform_plugins(Path("plugins"), session)
-register_loaded_plugins(registry, loaded)
-```
+## 示例
 
-完整说明见 [`docs/guide.md`](docs/guide.md)。
+- `examples/hello_plugin/` — 通用插件
+- `examples/echo_platform/` — 平台扩展插件
 
-## 开发
-
-```bash
-pip install -e ".[dev]"
-pytest -q
-```
+文档：[`docs/guide.md`](docs/guide.md)

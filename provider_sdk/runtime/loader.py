@@ -6,15 +6,16 @@ import importlib.util
 import logging
 import sys
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import aiohttp
 
 from provider_sdk.context import HostServices, create_plugin_context
-from provider_sdk.plugin import ProviderPlugin, get_platform_adapter, is_platform_plugin
-from provider_sdk.platform import PlatformAdapter
+from provider_sdk.extensions.platform.adapter import PlatformAdapter
+from provider_sdk.extensions.platform.bridge import try_get_platform_adapter
+from provider_sdk.plugin import ProviderPlugin, is_provider_plugin
 from provider_sdk.types.manifest import PluginManifest, load_manifest_file
 
 __all__ = [
@@ -41,9 +42,10 @@ class LoadedPlugin:
 
     manifest: PluginManifest
     plugin: ProviderPlugin
-    adapter: PlatformAdapter
     plugin_dir: Path
     module_name: str
+    components: List[Dict[str, Any]]
+    adapter: Optional[PlatformAdapter] = None
 
 
 def discover_plugin_dirs(plugins_root: Path) -> List[Path]:
@@ -102,24 +104,14 @@ def _load_entry_module(plugin_dir: Path, plugin_id: str) -> Any:
     return module
 
 
-def _validate_lifecycle(plugin: ProviderPlugin) -> None:
-    cls = type(plugin)
-    if cls.on_load is ProviderPlugin.on_load:
-        pass
-    if cls.on_unload is ProviderPlugin.on_unload:
-        pass
-    if cls.on_config_update is ProviderPlugin.on_config_update:
-        pass
-
-
 class PluginLoader:
-    """扫描 ``plugins/`` 目录并加载 SDK 平台插件。"""
+    """扫描 ``plugins/`` 目录并加载 SDK 插件。"""
 
     def __init__(
         self,
         *,
         host_version: str = "",
-        plugin_type_filter: str = "platform",
+        plugin_type_filter: str = "",
     ) -> None:
         self._host_version = host_version
         self._plugin_type_filter = plugin_type_filter.strip().lower()
@@ -144,7 +136,7 @@ class PluginLoader:
         whitelist: Optional[Sequence[str]] = None,
         blacklist: Optional[Sequence[str]] = None,
     ) -> List[LoadedPlugin]:
-        """发现并加载全部合法插件。"""
+        """发现并加载合法插件。"""
         plugin_dirs = discover_plugin_dirs(plugins_root)
         manifests: Dict[str, PluginManifest] = {}
         dir_by_id: Dict[str, Path] = {}
@@ -170,11 +162,11 @@ class PluginLoader:
         loaded: List[LoadedPlugin] = []
         for plugin_id in ordered_ids:
             manifest = manifests[plugin_id]
-            adapter_name = plugin_id.rsplit(".", 1)[-1]
+            short_name = plugin_id.rsplit(".", 1)[-1]
 
-            if wl is not None and adapter_name not in wl and plugin_id not in wl:
+            if wl is not None and short_name not in wl and plugin_id not in wl:
                 continue
-            if adapter_name in bl or plugin_id in bl:
+            if short_name in bl or plugin_id in bl:
                 continue
 
             plugin_dir = dir_by_id[plugin_id]
@@ -211,17 +203,13 @@ class PluginLoader:
             raise PluginLoadError(f"插件 {manifest.id} 缺少 {_FACTORY_NAME}() 工厂函数")
 
         instance = factory()
-        if not is_platform_plugin(instance):
+        if not is_provider_plugin(instance):
             raise PluginLoadError(f"插件 {manifest.id} 必须返回 ProviderPlugin 实例")
 
-        _validate_lifecycle(instance)
-        adapter = get_platform_adapter(instance)
-
-        if adapter.name != manifest.id.split(".")[-1] and adapter.name != manifest.id:
-            logger.warning(
-                "插件 %s 的 adapter.name=%s 与 manifest id 不完全一致",
-                manifest.id,
-                adapter.name,
+        adapter = try_get_platform_adapter(instance)
+        if manifest.plugin_type == "platform" and adapter is None:
+            raise PluginLoadError(
+                f"platform 类型插件 {manifest.id} 必须提供平台适配器"
             )
 
         config_lookup = get_plugin_config or (lambda _pid: {})
@@ -239,24 +227,29 @@ class PluginLoader:
         if isinstance(initial_config, Mapping):
             instance.set_plugin_config(dict(initial_config))
 
+        components = instance.get_components()
         await instance.on_load()
-        await adapter.init(session)
+
+        if adapter is not None:
+            await adapter.init(session)
 
         return LoadedPlugin(
             manifest=manifest,
             plugin=instance,
-            adapter=adapter,
             plugin_dir=plugin_dir,
             module_name=module.__name__,
+            components=components,
+            adapter=adapter,
         )
 
     async def unload_all(self) -> None:
         """卸载全部已加载插件。"""
         for plugin_id, record in list(self._loaded.items()):
-            try:
-                await record.adapter.close()
-            except Exception as exc:
-                logger.warning("关闭适配器失败 [%s]: %s", plugin_id, exc)
+            if record.adapter is not None:
+                try:
+                    await record.adapter.close()
+                except Exception as exc:
+                    logger.warning("关闭适配器失败 [%s]: %s", plugin_id, exc)
             try:
                 await record.plugin.on_unload()
             except Exception as exc:

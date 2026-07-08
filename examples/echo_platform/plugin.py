@@ -6,14 +6,8 @@ from typing import Any, AsyncGenerator, Dict, List, Union
 
 import aiohttp
 
-from provider_sdk import (
-    Candidate,
-    Field,
-    PlatformAdapter,
-    PluginConfigBase,
-    ProviderPlugin,
-    make_id,
-)
+from provider_sdk import Field, PluginConfigBase, ProviderPlugin
+from provider_sdk.extensions.platform import Candidate, PlatformAdapter, make_id
 
 
 class EchoPluginConfig(PluginConfigBase):

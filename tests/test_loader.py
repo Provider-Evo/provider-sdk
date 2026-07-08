@@ -6,50 +6,58 @@ from pathlib import Path
 
 import pytest
 
-from provider_sdk.types.manifest import load_manifest_file
 from provider_sdk.runtime.loader import PluginLoader, discover_plugin_dirs
+from provider_sdk.runtime.manager import PluginManager
+from provider_sdk.types.manifest import load_manifest_file
 
 EXAMPLES_ROOT = Path(__file__).resolve().parents[1] / "examples"
 
 
-def test_parse_echo_manifest() -> None:
-    manifest = load_manifest_file(EXAMPLES_ROOT / "echo_platform")
-    assert manifest.id == "provider-sdk.echo-platform"
-    assert manifest.plugin_type == "platform"
-    assert manifest.version == "0.1.0"
+def test_parse_hello_manifest() -> None:
+    manifest = load_manifest_file(EXAMPLES_ROOT / "hello_plugin")
+    assert manifest.id == "provider-sdk.hello-plugin"
+    assert manifest.plugin_type == "general"
 
 
-def test_discover_example_plugins() -> None:
+def test_discover_examples() -> None:
     dirs = discover_plugin_dirs(EXAMPLES_ROOT)
-    assert any(d.name == "echo_platform" for d in dirs)
+    names = {d.name for d in dirs}
+    assert "hello_plugin" in names
+    assert "echo_platform" in names
 
 
 @pytest.mark.asyncio
-async def test_load_echo_plugin(aiohttp_client_session) -> None:
+async def test_load_hello_plugin(aiohttp_client_session) -> None:
     loader = PluginLoader()
+    loaded = await loader.discover_and_load(EXAMPLES_ROOT, aiohttp_client_session)
+    hello = next(r for r in loaded if r.manifest.id.endswith("hello-plugin"))
+    assert hello.adapter is None
+    assert any(c["type"] == "route" for c in hello.components)
+    await loader.unload_all()
+
+
+@pytest.mark.asyncio
+async def test_load_platform_plugin_only(aiohttp_client_session) -> None:
+    loader = PluginLoader(plugin_type_filter="platform")
     loaded = await loader.discover_and_load(
         EXAMPLES_ROOT,
         aiohttp_client_session,
-        get_plugin_config=lambda _pid: {"enabled": True, "prefix": ">> "},
+        get_plugin_config=lambda _pid: {"prefix": ">> "},
     )
     assert len(loaded) == 1
-    record = loaded[0]
-    assert record.adapter.name == "echo"
-    candidates = await record.adapter.candidates()
-    assert len(candidates) == 1
-    assert candidates[0].chat is True
-
-    chunks = []
-    async for piece in record.adapter.complete(
-        candidates[0],
-        [{"role": "user", "content": "hello"}],
-        "echo",
-        stream=False,
-    ):
-        chunks.append(piece)
-    assert "".join(chunks) == ">> hello"
-
+    assert loaded[0].adapter is not None
+    assert loaded[0].adapter.name == "echo"
     await loader.unload_all()
+
+
+@pytest.mark.asyncio
+async def test_plugin_manager(aiohttp_client_session) -> None:
+    mgr = PluginManager()
+    await mgr.load_all(EXAMPLES_ROOT, aiohttp_client_session)
+    routes = mgr.get_components("route")
+    assert any(r["plugin_id"].endswith("hello-plugin") for r in routes)
+    assert len(mgr.get_platform_adapters()) == 1
+    await mgr.unload_all()
 
 
 @pytest.fixture

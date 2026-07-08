@@ -22,7 +22,7 @@ class PluginManifest:
     name: str
     version: str
     description: str = ""
-    plugin_type: str = "platform"
+    plugin_type: str = "general"
     author: str = ""
     dependencies: List[str] = field(default_factory=list)
     capabilities: List[str] = field(default_factory=list)
