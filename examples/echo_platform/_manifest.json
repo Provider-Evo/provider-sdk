@@ -1,0 +1,24 @@
+{
+  "manifest_version": 1,
+  "id": "provider-sdk.echo-platform",
+  "name": "Echo 示例平台",
+  "version": "0.1.0",
+  "description": "将用户最后一条消息原样回显的演示平台插件",
+  "plugin_type": "platform",
+  "author": {
+    "name": "provider-sdk"
+  },
+  "host_application": {
+    "min_version": "2.2.0",
+    "max_version": "9.99.99"
+  },
+  "sdk": {
+    "min_version": "0.1.0",
+    "max_version": "0.99.99"
+  },
+  "dependencies": [],
+  "capabilities": [
+    "config.get_plugin",
+    "http.session"
+  ]
+}
