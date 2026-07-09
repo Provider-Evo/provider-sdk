@@ -21,7 +21,7 @@ __all__ = ["ProviderPlugin", "is_provider_plugin"]
 
 
 class ProviderPlugin:
-    """SDK 插件基类 — 对标 maibot-sdk 的 ``MaiBotPlugin``。
+    """SDK 插件基类。
 
     通用插件通过 ``@Route`` / ``@Hook`` / ``@API`` 向 Host 声明能力。
     平台适配器是**可选扩展**，见 ``provider_sdk.extensions.platform``。

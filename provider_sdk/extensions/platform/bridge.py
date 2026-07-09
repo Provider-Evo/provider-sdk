@@ -11,6 +11,7 @@ __all__ = [
     "get_platform_adapter",
     "has_platform_adapter",
     "try_get_platform_adapter",
+    "attach_platform_adapter",
 ]
 
 
@@ -29,7 +30,20 @@ def try_get_platform_adapter(plugin: ProviderPlugin) -> Optional[PlatformAdapter
         adapter = getter()
         if isinstance(adapter, PlatformAdapter):
             return adapter
+    inner = getattr(plugin, "_adapter", None)
+    if inner is not None:
+        return inner  # type: ignore[return-value]
     return None
+
+
+def attach_platform_adapter(plugin: ProviderPlugin, adapter: Any) -> None:
+    """将平台适配器实例挂到插件上。"""
+    plugin._adapter = adapter  # type: ignore[attr-defined]
+
+    def _get_adapter() -> Any:
+        return adapter
+
+    plugin.get_adapter = _get_adapter  # type: ignore[attr-defined]
 
 
 def get_platform_adapter(plugin: ProviderPlugin) -> PlatformAdapter:

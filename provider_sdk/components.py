@@ -1,4 +1,4 @@
-"""组件声明装饰器 — 对标 maibot-sdk 的 Tool / Command / API 模式。"""
+"""组件声明装饰器 — Route / Hook / API。"""
 
 from __future__ import annotations
 

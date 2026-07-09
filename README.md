@@ -1,6 +1,6 @@
 # provider-sdk
 
-Provider-V2 **通用插件 SDK**，对标 [maibot-plugin-sdk](https://github.com/Mai-with-u/maibot-plugin-sdk)。
+Provider-V2 **通用插件 SDK**。
 
 平台适配器只是可选扩展（`extensions.platform`），不是 SDK 核心。
 
@@ -34,16 +34,15 @@ def create_plugin() -> MyPlugin:
     return MyPlugin()
 ```
 
-## 与 maibot-sdk 的对应
+## 核心概念
 
-| maibot-sdk | provider-sdk |
-|------------|--------------|
-| `MaiBotPlugin` | `ProviderPlugin` |
-| `@Tool` / `@Command` / `@API` | `@Route` / `@Hook` / `@API` |
-| `create_plugin()` + `_manifest.json` | 相同 |
-| `self.ctx.*` 能力代理 | `logger` / `config` / `http` |
-| `@MessageGateway` | 无（Provider 非 IM Bot） |
-| 平台相关 | `extensions.platform.PlatformAdapter`（可选） |
+| 概念 | 说明 |
+|------|------|
+| `ProviderPlugin` | 插件基类，生命周期 + 配置 |
+| `create_plugin()` | 模块级工厂函数 |
+| `_manifest.json` | 插件元数据与依赖 |
+| `@Route` / `@Hook` / `@API` | 向 Host 声明组件 |
+| `self.ctx` | 运行时上下文（日志 / 配置 / HTTP） |
 
 ## 插件类型
 

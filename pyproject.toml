@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "provider-sdk"
-version = "0.2.0"
+version = "0.3.0"
 description = "Provider-V2 平台插件 SDK — 第三方平台适配器开发与加载"
 readme = "README.md"
 license = "MIT"

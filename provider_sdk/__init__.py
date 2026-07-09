@@ -1,4 +1,4 @@
-"""Provider 插件 SDK — 对标 maibot-plugin-sdk 的通用插件开发包。
+"""Provider 插件 SDK — 通用插件开发包。
 
 插件作者的唯一依赖入口。插件不得导入 ``src.*``，只能通过本 SDK 与 Host 交互。
 
@@ -21,7 +21,7 @@ from provider_sdk.types import (
     CONFIG_RELOAD_SCOPE_SELF,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "ProviderPlugin",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import logging
 import sys
@@ -23,6 +24,7 @@ __all__ = [
     "PluginLoadError",
     "PluginLoader",
     "discover_plugin_dirs",
+    "purge_plugin_modules",
 ]
 
 logger = logging.getLogger("provider_sdk.runtime.loader")
@@ -65,16 +67,41 @@ def discover_plugin_dirs(plugins_root: Path) -> List[Path]:
     return candidates
 
 
-def _topological_sort(manifests: Mapping[str, PluginManifest]) -> List[str]:
-    indegree: Dict[str, int] = {pid: 0 for pid in manifests}
-    graph: Dict[str, List[str]] = {pid: [] for pid in manifests}
+def _topological_sort(
+    manifests: Mapping[str, PluginManifest],
+    failed: Optional[Dict[str, str]] = None,
+) -> List[str]:
+    """拓扑排序，容错处理缺失依赖和循环依赖。
+
+    缺失依赖的插件会被跳过并记录到 failed 中，
+    循环依赖也会被跳过而非抛出异常。
+    """
+    # 第一遍：过滤掉有缺失依赖的插件
+    valid_ids: set = set(manifests.keys())
+    skipped: List[str] = []
 
     for pid, manifest in manifests.items():
         for dep in manifest.dependencies:
             if dep not in manifests:
-                raise PluginLoadError(f"插件 {pid} 依赖未找到的插件: {dep}")
-            graph[dep].append(pid)
-            indegree[pid] += 1
+                skipped.append(pid)
+                if failed is not None:
+                    failed[pid] = f"依赖未找到: {dep}"
+                logger.error("插件 %s 依赖未找到的插件: %s，跳过", pid, dep)
+                break
+
+    for pid in skipped:
+        valid_ids.discard(pid)
+
+    # 第二遍：对有效插件进行拓扑排序
+    indegree: Dict[str, int] = {pid: 0 for pid in valid_ids}
+    graph: Dict[str, List[str]] = {pid: [] for pid in valid_ids}
+
+    for pid in valid_ids:
+        manifest = manifests[pid]
+        for dep in manifest.dependencies:
+            if dep in valid_ids:
+                graph[dep].append(pid)
+                indegree[pid] += 1
 
     queue = deque(sorted(pid for pid, deg in indegree.items() if deg == 0))
     ordered: List[str] = []
@@ -86,13 +113,52 @@ def _topological_sort(manifests: Mapping[str, PluginManifest]) -> List[str]:
             if indegree[nxt] == 0:
                 queue.append(nxt)
 
-    if len(ordered) != len(manifests):
-        raise PluginLoadError("插件依赖存在环")
+    # 检测循环依赖（剩余未排序的插件）
+    remaining = valid_ids - set(ordered)
+    for pid in remaining:
+        if failed is not None:
+            failed[pid] = "插件依赖存在循环"
+        logger.error("插件 %s 依赖存在循环，跳过", pid)
+
     return ordered
 
 
+def _synthetic_module_name(plugin_id: str) -> str:
+    return f"provider_plugin_{plugin_id.replace('.', '_').replace('-', '_')}"
+
+
+def purge_plugin_modules(plugin_id: str, plugin_dir: Path) -> List[str]:
+    """清理插件目录下已导入的模块缓存（热重载前必须调用）。"""
+    removed: List[str] = []
+    plugin_path = plugin_dir.resolve()
+    synthetic = _synthetic_module_name(plugin_id)
+
+    for module_name, module in list(sys.modules.items()):
+        if module_name == synthetic:
+            removed.append(module_name)
+            sys.modules.pop(module_name, None)
+            continue
+
+        module_file = getattr(module, "__file__", None)
+        if module_file is None:
+            continue
+        try:
+            module_path = Path(module_file).resolve()
+        except Exception:
+            continue
+        if module_path.is_relative_to(plugin_path):
+            removed.append(module_name)
+            sys.modules.pop(module_name, None)
+
+    importlib.invalidate_caches()
+    return removed
+
+
 def _load_entry_module(plugin_dir: Path, plugin_id: str) -> Any:
-    module_name = f"provider_plugin_{plugin_id.replace('.', '_').replace('-', '_')}"
+    root = str(plugin_dir.resolve())
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    module_name = _synthetic_module_name(plugin_id)
     entry = plugin_dir / _ENTRY_MODULE
     spec = importlib.util.spec_from_file_location(module_name, entry)
     if spec is None or spec.loader is None:
@@ -157,7 +223,7 @@ class PluginLoader:
 
         wl = set(whitelist) if whitelist else None
         bl = set(blacklist or [])
-        ordered_ids = _topological_sort(manifests)
+        ordered_ids = _topological_sort(manifests, failed=self._failed)
 
         loaded: List[LoadedPlugin] = []
         for plugin_id in ordered_ids:
@@ -206,12 +272,6 @@ class PluginLoader:
         if not is_provider_plugin(instance):
             raise PluginLoadError(f"插件 {manifest.id} 必须返回 ProviderPlugin 实例")
 
-        adapter = try_get_platform_adapter(instance)
-        if manifest.plugin_type == "platform" and adapter is None:
-            raise PluginLoadError(
-                f"platform 类型插件 {manifest.id} 必须提供平台适配器"
-            )
-
         config_lookup = get_plugin_config or (lambda _pid: {})
         services = HostServices(
             session=session,
@@ -230,8 +290,15 @@ class PluginLoader:
         components = instance.get_components()
         await instance.on_load()
 
-        if adapter is not None:
+        adapter = try_get_platform_adapter(instance)
+        if manifest.plugin_type == "platform" and adapter is None:
+            raise PluginLoadError(
+                f"platform 类型插件 {manifest.id} 必须提供平台适配器（get_adapter 或 _adapter）"
+            )
+
+        if adapter is not None and not getattr(instance, "_adapter_inited", False):
             await adapter.init(session)
+            instance._adapter_inited = True  # type: ignore[attr-defined]
 
         return LoadedPlugin(
             manifest=manifest,
@@ -241,6 +308,10 @@ class PluginLoader:
             components=components,
             adapter=adapter,
         )
+
+    def purge_plugin_modules(self, plugin_id: str, plugin_dir: Path) -> List[str]:
+        """清理指定插件的模块缓存。"""
+        return purge_plugin_modules(plugin_id, plugin_dir)
 
     async def unload_all(self) -> None:
         """卸载全部已加载插件。"""
@@ -254,4 +325,8 @@ class PluginLoader:
                 await record.plugin.on_unload()
             except Exception as exc:
                 logger.warning("on_unload 失败 [%s]: %s", plugin_id, exc)
+            try:
+                self.purge_plugin_modules(plugin_id, record.plugin_dir)
+            except Exception as exc:
+                logger.warning("清理插件模块缓存失败 [%s]: %s", plugin_id, exc)
         self._loaded.clear()

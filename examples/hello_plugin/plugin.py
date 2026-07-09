@@ -1,4 +1,4 @@
-"""Hello 通用插件示例 — 对标 maibot hello_world_plugin。"""
+"""Hello 通用插件示例。"""
 
 from __future__ import annotations
 

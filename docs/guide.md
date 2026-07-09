@@ -2,7 +2,7 @@
 
 ## 定位
 
-**provider-sdk 是通用插件 SDK**，对标 maibot-plugin-sdk 的外壳契约：
+**provider-sdk 是通用插件 SDK**，约定包括：
 
 - 独立包，禁止 `import src.*`
 - `plugin.py` + `create_plugin()` + `_manifest.json`

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import sys
 
 from provider_sdk.runtime.loader import PluginLoader, discover_plugin_dirs
 from provider_sdk.runtime.manager import PluginManager
@@ -47,6 +48,21 @@ async def test_load_platform_plugin_only(aiohttp_client_session) -> None:
     assert len(loaded) == 1
     assert loaded[0].adapter is not None
     assert loaded[0].adapter.name == "echo"
+    await loader.unload_all()
+
+
+@pytest.mark.asyncio
+async def test_purge_plugin_modules_allows_reload(aiohttp_client_session) -> None:
+    loader = PluginLoader()
+    loaded = await loader.discover_and_load(EXAMPLES_ROOT, aiohttp_client_session)
+    hello = next(r for r in loaded if r.manifest.id.endswith("hello-plugin"))
+    module_name = hello.module_name
+    assert module_name in sys.modules
+
+    removed = loader.purge_plugin_modules(hello.manifest.id, hello.plugin_dir)
+    assert module_name in removed
+    assert module_name not in sys.modules
+
     await loader.unload_all()
 
 
