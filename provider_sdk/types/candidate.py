@@ -12,6 +12,7 @@ __all__ = ["ALL_CAPABILITIES", "Candidate", "make_id"]
 
 ALL_CAPABILITIES: tuple[str, ...] = (
     "chat",
+    "completions",
     "vision",
     "image_gen",
     "image_edit",
@@ -30,6 +31,7 @@ ALL_CAPABILITIES: tuple[str, ...] = (
     "tools",
     "native_tools",
     "upload",
+    "uploads",
     "continuation",
     "moderation",
     "rerank",
@@ -42,6 +44,14 @@ ALL_CAPABILITIES: tuple[str, ...] = (
     "vector_stores",
     "realtime",
     "responses",
+    "anthropic_messages",
+    "message_batches",
+    "count_tokens",
+    "conversations",
+    "containers",
+    "evals",
+    "skills",
+    "chatkit",
 )
 
 
@@ -70,6 +80,7 @@ class Candidate:
     resource_id: str
 
     chat: bool = False
+    completions: bool = False
     vision: bool = False
     tools: bool = False
     native_tools: bool = False
@@ -95,8 +106,17 @@ class Candidate:
     artifacts: bool = False
     moderation: bool = False
     responses: bool = False
+    anthropic_messages: bool = False
+    message_batches: bool = False
+    count_tokens: bool = False
+    conversations: bool = False
+    containers: bool = False
+    evals: bool = False
+    skills: bool = False
+    chatkit: bool = False
 
     upload: bool = False
+    uploads: bool = False
     files: bool = False
     vector_stores: bool = False
 
