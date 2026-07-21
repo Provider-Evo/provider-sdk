@@ -30,6 +30,11 @@ class TestModelIdRegistry:
         assert reg.resolve_upstream("qwen3-7-max") == "qwen3.7-max"
         assert reg.resolve_upstream("qwen3.7-max") == "qwen3.7-max"
 
+    def test_cloudflare_kimi_version_dots(self):
+        assert upstream_to_public_id(
+            "@cf/moonshotai/kimi-k2.7-code"
+        ) == "cf-moonshotai-kimi-k2-7-code"
+
     def test_catalog_display_name(self):
         reg = ModelIdRegistry("test", persist=False)
         public = reg.register_catalog(
