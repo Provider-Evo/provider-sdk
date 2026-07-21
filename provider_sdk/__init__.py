@@ -7,7 +7,7 @@ from provider_sdk.core.plugin import ProviderPlugin, is_provider_plugin
 from provider_sdk.types import CONFIG_RELOAD_SCOPE_GLOBAL, CONFIG_RELOAD_SCOPE_SELF
 from provider_sdk.types.model_ids import ModelIdRegistry, upstream_to_public_id
 
-__version__ = "0.3.5"
+__version__ = "0.3.6"
 
 __all__ = [
     "ProviderPlugin", "is_provider_plugin", "PluginContext",
