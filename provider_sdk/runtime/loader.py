@@ -13,10 +13,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import aiohttp
 
-from provider_sdk.context import HostServices, create_plugin_context
+from provider_sdk.core.context import HostServices, create_plugin_context
 from provider_sdk.extensions.platform.adapter import PlatformAdapter
 from provider_sdk.extensions.platform.bridge import try_get_platform_adapter
-from provider_sdk.plugin import ProviderPlugin, is_provider_plugin
+from provider_sdk.core.plugin import ProviderPlugin, is_provider_plugin
 from provider_sdk.types.manifest import PluginManifest, load_manifest_file
 
 __all__ = [
@@ -29,7 +29,7 @@ __all__ = [
 
 logger = logging.getLogger("provider_sdk.runtime.loader")
 
-_MANIFEST_NAME = "_manifest.json"
+_MANIFEST_NAME = "manifest.json"
 _ENTRY_MODULE = "plugin.py"
 _FACTORY_NAME = "create_plugin"
 
@@ -71,38 +71,9 @@ def _topological_sort(
     manifests: Mapping[str, PluginManifest],
     failed: Optional[Dict[str, str]] = None,
 ) -> List[str]:
-    """拓扑排序，容错处理缺失依赖和循环依赖。
-
-    缺失依赖的插件会被跳过并记录到 failed 中，
-    循环依赖也会被跳过而非抛出异常。
-    """
-    # 第一遍：过滤掉有缺失依赖的插件
-    valid_ids: set = set(manifests.keys())
-    skipped: List[str] = []
-
-    for pid, manifest in manifests.items():
-        for dep in manifest.dependencies:
-            if dep not in manifests:
-                skipped.append(pid)
-                if failed is not None:
-                    failed[pid] = f"依赖未找到: {dep}"
-                logger.error("插件 %s 依赖未找到的插件: %s，跳过", pid, dep)
-                break
-
-    for pid in skipped:
-        valid_ids.discard(pid)
-
-    # 第二遍：对有效插件进行拓扑排序
-    indegree: Dict[str, int] = {pid: 0 for pid in valid_ids}
-    graph: Dict[str, List[str]] = {pid: [] for pid in valid_ids}
-
-    for pid in valid_ids:
-        manifest = manifests[pid]
-        for dep in manifest.dependencies:
-            if dep in valid_ids:
-                graph[dep].append(pid)
-                indegree[pid] += 1
-
+    """拓扑排序，容错处理缺失依赖和循环依赖。"""
+    valid_ids = _filter_valid_ids(manifests, failed)
+    indegree, graph = _build_graph(valid_ids, manifests)
     queue = deque(sorted(pid for pid, deg in indegree.items() if deg == 0))
     ordered: List[str] = []
     while queue:
@@ -112,14 +83,7 @@ def _topological_sort(
             indegree[nxt] -= 1
             if indegree[nxt] == 0:
                 queue.append(nxt)
-
-    # 检测循环依赖（剩余未排序的插件）
-    remaining = valid_ids - set(ordered)
-    for pid in remaining:
-        if failed is not None:
-            failed[pid] = "插件依赖存在循环"
-        logger.error("插件 %s 依赖存在循环，跳过", pid)
-
+    _mark_cycles(valid_ids, ordered, failed)
     return ordered
 
 
@@ -170,6 +134,130 @@ def _load_entry_module(plugin_dir: Path, plugin_id: str) -> Any:
     return module
 
 
+
+def _collect_manifests(
+    plugin_dirs: list[Path],
+    *,
+    plugin_type_filter: str,
+    failed: dict[str, str],
+) -> tuple[dict[str, "PluginManifest"], dict[str, Path]]:
+    manifests: dict[str, PluginManifest] = {}
+    dir_by_id: dict[str, Path] = {}
+    for plugin_dir in plugin_dirs:
+        try:
+            manifest = load_manifest_file(plugin_dir)
+        except Exception as exc:
+            failed[plugin_dir.name] = str(exc)
+            logger.error("manifest 解析失败 [%s]: %s", plugin_dir.name, exc)
+            continue
+        if plugin_type_filter and manifest.plugin_type != plugin_type_filter:
+            continue
+        manifests[manifest.id] = manifest
+        dir_by_id[manifest.id] = plugin_dir
+    return manifests, dir_by_id
+
+
+def _should_skip_plugin(
+    plugin_id: str,
+    *,
+    whitelist: set[str] | None,
+    blacklist: set[str],
+) -> bool:
+    short_name = plugin_id.rsplit(".", 1)[-1]
+    if whitelist is not None and short_name not in whitelist and plugin_id not in whitelist:
+        return True
+    return short_name in blacklist or plugin_id in blacklist
+
+
+def _filter_valid_ids(
+    manifests: dict[str, "PluginManifest"],
+    failed: dict[str, str] | None,
+) -> set[str]:
+    valid_ids = set(manifests.keys())
+    skipped: list[str] = []
+    for pid, manifest in manifests.items():
+        for dep in manifest.dependencies:
+            if dep not in manifests:
+                skipped.append(pid)
+                if failed is not None:
+                    failed[pid] = f"依赖未找到: {dep}"
+                logger.error("插件 %s 依赖未找到的插件: %s，跳过", pid, dep)
+                break
+    for pid in skipped:
+        valid_ids.discard(pid)
+    return valid_ids
+
+
+def _build_graph(valid_ids: set[str], manifests: dict[str, "PluginManifest"]) -> tuple[dict[str, int], dict[str, list[str]]]:
+    indegree: dict[str, int] = {pid: 0 for pid in valid_ids}
+    graph: dict[str, list[str]] = {pid: [] for pid in valid_ids}
+    for pid in valid_ids:
+        for dep in manifests[pid].dependencies:
+            if dep in valid_ids:
+                graph[dep].append(pid)
+                indegree[pid] += 1
+    return indegree, graph
+
+
+def _mark_cycles(valid_ids: set[str], ordered: list[str], failed: dict[str, str] | None) -> None:
+    remaining = valid_ids - set(ordered)
+    for pid in remaining:
+        if failed is not None:
+            failed[pid] = "插件依赖存在循环"
+        logger.error("插件 %s 依赖存在循环，跳过", pid)
+
+
+
+def _instantiate_plugin(module: Any, plugin_id: str) -> ProviderPlugin:
+    factory = getattr(module, _FACTORY_NAME, None)
+    if not callable(factory):
+        raise PluginLoadError(f"插件 {plugin_id} 缺少 {_FACTORY_NAME}() 工厂函数")
+    instance = factory()
+    if not is_provider_plugin(instance):
+        raise PluginLoadError(f"插件 {plugin_id} 必须返回 ProviderPlugin 实例")
+    return instance
+
+
+async def _bind_plugin_context(
+    instance: ProviderPlugin,
+    manifest: PluginManifest,
+    plugin_dir: Path,
+    session: aiohttp.ClientSession,
+    *,
+    get_plugin_config: Optional[Callable[[str], Mapping[str, Any]]] = None,
+    get_global_config: Optional[Callable[[], Mapping[str, Any]]] = None,
+) -> None:
+    config_lookup = get_plugin_config or (lambda _pid: {})
+    services = HostServices(
+        session=session,
+        plugin_id=manifest.id,
+        plugin_dir=str(plugin_dir.resolve()),
+        get_plugin_config=lambda: config_lookup(manifest.id),
+        get_global_config=get_global_config,
+    )
+    ctx = create_plugin_context(services)
+    instance._set_context(ctx)
+    initial_config = config_lookup(manifest.id)
+    if isinstance(initial_config, Mapping):
+        instance.set_plugin_config(dict(initial_config))
+
+
+async def _init_platform_adapter(
+    instance: ProviderPlugin,
+    manifest: PluginManifest,
+    session: aiohttp.ClientSession,
+) -> Optional[PlatformAdapter]:
+    adapter = try_get_platform_adapter(instance)
+    if manifest.plugin_type == "platform" and adapter is None:
+        raise PluginLoadError(
+            f"platform 类型插件 {manifest.id} 必须提供平台适配器（get_adapter 或 _adapter）"
+        )
+    if adapter is not None and not getattr(instance, "_adapter_inited", False):
+        await adapter.init(session)
+        instance._adapter_inited = True  # type: ignore[attr-defined]
+    return adapter
+
+
 class PluginLoader:
     """扫描 ``plugins/`` 目录并加载 SDK 插件。"""
 
@@ -202,44 +290,23 @@ class PluginLoader:
         whitelist: Optional[Sequence[str]] = None,
         blacklist: Optional[Sequence[str]] = None,
     ) -> List[LoadedPlugin]:
-        """发现并加载合法插件。"""
         plugin_dirs = discover_plugin_dirs(plugins_root)
-        manifests: Dict[str, PluginManifest] = {}
-        dir_by_id: Dict[str, Path] = {}
-
-        for plugin_dir in plugin_dirs:
-            try:
-                manifest = load_manifest_file(plugin_dir)
-            except Exception as exc:
-                self._failed[plugin_dir.name] = str(exc)
-                logger.error("manifest 解析失败 [%s]: %s", plugin_dir.name, exc)
-                continue
-
-            if self._plugin_type_filter and manifest.plugin_type != self._plugin_type_filter:
-                continue
-
-            manifests[manifest.id] = manifest
-            dir_by_id[manifest.id] = plugin_dir
-
+        manifests, dir_by_id = _collect_manifests(
+            plugin_dirs,
+            plugin_type_filter=self._plugin_type_filter,
+            failed=self._failed,
+        )
         wl = set(whitelist) if whitelist else None
         bl = set(blacklist or [])
-        ordered_ids = _topological_sort(manifests, failed=self._failed)
-
         loaded: List[LoadedPlugin] = []
-        for plugin_id in ordered_ids:
-            manifest = manifests[plugin_id]
-            short_name = plugin_id.rsplit(".", 1)[-1]
-
-            if wl is not None and short_name not in wl and plugin_id not in wl:
+        for plugin_id in _topological_sort(manifests, failed=self._failed):
+            if _should_skip_plugin(plugin_id, whitelist=wl, blacklist=bl):
                 continue
-            if short_name in bl or plugin_id in bl:
-                continue
-
             plugin_dir = dir_by_id[plugin_id]
             try:
                 record = await self._load_one(
                     plugin_dir,
-                    manifest,
+                    manifests[plugin_id],
                     session,
                     get_plugin_config=get_plugin_config,
                     get_global_config=get_global_config,
@@ -248,10 +315,8 @@ class PluginLoader:
                 self._failed[plugin_id] = str(exc)
                 logger.error("插件加载失败 [%s]: %s", plugin_id, exc)
                 continue
-
             self._loaded[plugin_id] = record
             loaded.append(record)
-
         return loaded
 
     async def _load_one(
@@ -264,42 +329,18 @@ class PluginLoader:
         get_global_config: Optional[Callable[[], Mapping[str, Any]]] = None,
     ) -> LoadedPlugin:
         module = _load_entry_module(plugin_dir, manifest.id)
-        factory = getattr(module, _FACTORY_NAME, None)
-        if not callable(factory):
-            raise PluginLoadError(f"插件 {manifest.id} 缺少 {_FACTORY_NAME}() 工厂函数")
-
-        instance = factory()
-        if not is_provider_plugin(instance):
-            raise PluginLoadError(f"插件 {manifest.id} 必须返回 ProviderPlugin 实例")
-
-        config_lookup = get_plugin_config or (lambda _pid: {})
-        services = HostServices(
-            session=session,
-            plugin_id=manifest.id,
-            plugin_dir=str(plugin_dir.resolve()),
-            get_plugin_config=lambda: config_lookup(manifest.id),
+        instance = _instantiate_plugin(module, manifest.id)
+        await _bind_plugin_context(
+            instance,
+            manifest,
+            plugin_dir,
+            session,
+            get_plugin_config=get_plugin_config,
             get_global_config=get_global_config,
         )
-        ctx = create_plugin_context(services)
-        instance._set_context(ctx)
-
-        initial_config = config_lookup(manifest.id)
-        if isinstance(initial_config, Mapping):
-            instance.set_plugin_config(dict(initial_config))
-
         components = instance.get_components()
         await instance.on_load()
-
-        adapter = try_get_platform_adapter(instance)
-        if manifest.plugin_type == "platform" and adapter is None:
-            raise PluginLoadError(
-                f"platform 类型插件 {manifest.id} 必须提供平台适配器（get_adapter 或 _adapter）"
-            )
-
-        if adapter is not None and not getattr(instance, "_adapter_inited", False):
-            await adapter.init(session)
-            instance._adapter_inited = True  # type: ignore[attr-defined]
-
+        adapter = await _init_platform_adapter(instance, manifest, session)
         return LoadedPlugin(
             manifest=manifest,
             plugin=instance,

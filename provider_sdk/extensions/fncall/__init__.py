@@ -1,5 +1,3 @@
-"""FnCall 协议插件扩展。"""
-
-from provider_sdk.extensions.fncall.mixin import FncallPluginMixin
+from provider_sdk.extensions.fncall.fncall import FncallPluginMixin
 
 __all__ = ["FncallPluginMixin"]

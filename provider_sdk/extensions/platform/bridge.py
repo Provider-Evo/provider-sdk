@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from provider_sdk.extensions.platform.adapter import PlatformAdapter
-from provider_sdk.plugin import ProviderPlugin
+from provider_sdk.core.plugin import ProviderPlugin
 
 __all__ = [
     "get_platform_adapter",

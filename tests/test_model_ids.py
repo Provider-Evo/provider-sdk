@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from provider_sdk.model_ids import ModelIdRegistry, upstream_to_public_id
+from provider_sdk.types.model_ids import ModelIdRegistry, upstream_to_public_id
 
 
 class TestUpstreamToPublicId:

@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 import aiohttp
 
-from provider_sdk.capabilities import ConfigCapability, HttpCapability, LoggingCapability
+from provider_sdk.types.caps import ConfigCapability, HttpCapability, LoggingCapability
 
 __all__ = ["HostServices", "PluginContext", "create_plugin_context"]
 

@@ -6,15 +6,15 @@ import logging
 from collections.abc import Mapping
 from typing import Any, ClassVar, Iterable
 
-from provider_sdk.components import collect_components
-from provider_sdk.config import (
+from provider_sdk.core.components import collect_components
+from provider_sdk.core.config import (
     PluginConfigBase,
     build_plugin_default_config,
     is_plugin_config_class,
     merge_plugin_config_data,
     validate_plugin_config,
 )
-from provider_sdk.context import PluginContext
+from provider_sdk.core.context import PluginContext
 from provider_sdk.types import CONFIG_RELOAD_SCOPE_SELF
 
 __all__ = ["ProviderPlugin", "is_provider_plugin"]

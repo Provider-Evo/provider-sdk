@@ -10,13 +10,13 @@ from typing import Any, Dict, List, Mapping, Optional
 
 __all__ = ["PluginManifest", "parse_manifest", "load_manifest_file"]
 
-_MANIFEST_FILENAME = "_manifest.json"
+_MANIFEST_FILENAME = "manifest.json"
 _PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,126}[a-z0-9]$")
 
 
 @dataclass(frozen=True)
 class PluginManifest:
-    """``_manifest.json`` 强类型视图。"""
+    """``manifest.json`` 强类型视图。"""
 
     id: str
     name: str
@@ -97,7 +97,7 @@ def parse_manifest(data: Mapping[str, Any]) -> PluginManifest:
 
 
 def load_manifest_file(plugin_dir: Path) -> PluginManifest:
-    """从插件目录读取 ``_manifest.json``。"""
+    """从插件目录读取 ``manifest.json``。"""
     path = plugin_dir / _MANIFEST_FILENAME
     if not path.is_file():
         raise FileNotFoundError(f"缺少 {_MANIFEST_FILENAME}: {plugin_dir}")

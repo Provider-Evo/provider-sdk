@@ -1,7 +1,7 @@
 """组件装饰器测试。"""
 
 from provider_sdk import API, Hook, ProviderPlugin, Route
-from provider_sdk.components import collect_components
+from provider_sdk.core.components import collect_components
 
 
 class DemoPlugin(ProviderPlugin):

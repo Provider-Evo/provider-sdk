@@ -1,6 +1,7 @@
 """从 Git URL 安装 Provider-Evo 插件。"""
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -31,6 +32,40 @@ def parse_git_url(url: str, *, ref: str = "") -> Tuple[str, str]:
     return base.strip(), ref
 
 
+def _git_clone(repo_url: str, git_ref: str, clone_dir: Path) -> None:
+    cmd = ["git", "clone", "--depth", "1", "--branch", git_ref, repo_url, str(clone_dir)]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode == 0:
+        return
+    cmd = ["git", "clone", "--depth", "1", repo_url, str(clone_dir)]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or proc.stdout or "git clone failed")
+    checkout = subprocess.run(
+        ["git", "checkout", git_ref],
+        cwd=clone_dir,
+        capture_output=True,
+        text=True,
+    )
+    if checkout.returncode != 0:
+        raise RuntimeError(checkout.stderr or "git checkout failed")
+
+
+def _resolve_plugin_folder(plugins_root: Path, pid: str) -> Path:
+    short = pid.rsplit(".", 1)[-1]
+    folder = plugins_root / pid.split(".")[-1].replace("_", "-").title()
+    if folder.name.startswith("Provider-"):
+        return folder
+    folder = plugins_root / f"Provider-{short.replace('.', '-').title()}-Adapter"
+    if "fncall" in short:
+        return plugins_root / "Provider-Fncall-Util"
+    if "webui" in short:
+        return plugins_root / "Provider-Webui-Util"
+    if "coplan" in short:
+        return plugins_root / "Provider-Coplan-Util"
+    return folder
+
+
 def install_plugin_from_git(
     url: str,
     plugins_root: Path,
@@ -43,46 +78,19 @@ def install_plugin_from_git(
     plugins_root.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="provider-plugin-") as tmp:
-        tmp_path = Path(tmp)
-        clone_dir = tmp_path / "repo"
-        cmd = ["git", "clone", "--depth", "1", "--branch", git_ref, repo_url, str(clone_dir)]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        if proc.returncode != 0:
-            cmd = ["git", "clone", "--depth", "1", repo_url, str(clone_dir)]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
-            if proc.returncode != 0:
-                raise RuntimeError(proc.stderr or proc.stdout or "git clone failed")
-            checkout = subprocess.run(
-                ["git", "checkout", git_ref],
-                cwd=clone_dir,
-                capture_output=True,
-                text=True,
-            )
-            if checkout.returncode != 0:
-                raise RuntimeError(checkout.stderr or "git checkout failed")
+        clone_dir = Path(tmp) / "repo"
+        _git_clone(repo_url, git_ref, clone_dir)
 
-        manifest_path = clone_dir / "_manifest.json"
+        manifest_path = clone_dir / "manifest.json"
         if not manifest_path.is_file():
-            raise FileNotFoundError("仓库根目录缺少 _manifest.json")
-
-        import json
+            raise FileNotFoundError("仓库根目录缺少 manifest.json")
 
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         pid = plugin_id or str(data.get("id") or "").strip()
         if not pid:
             raise ValueError("manifest 缺少 id")
 
-        folder = plugins_root / pid.split(".")[-1].replace("_", "-").title()
-        if not folder.name.startswith("Provider-"):
-            short = pid.rsplit(".", 1)[-1]
-            folder = plugins_root / f"Provider-{short.replace('.', '-').title()}-Adapter"
-            if "fncall" in short:
-                folder = plugins_root / "Provider-Fncall-Util"
-            elif "webui" in short:
-                folder = plugins_root / "Provider-Webui-Util"
-            elif "coplan" in short:
-                folder = plugins_root / "Provider-Coplan-Util"
-
+        folder = _resolve_plugin_folder(plugins_root, pid)
         if folder.exists():
             shutil.rmtree(folder)
         shutil.copytree(clone_dir, folder)

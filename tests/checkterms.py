@@ -17,17 +17,14 @@ ALLOWED_FILE_NAMES = frozenset({"agents.md"})
 
 DEFAULT_ROOTS: Tuple[str, ...] = (
     "provider_sdk",
-    "examples",
     "tests",
-    "docs",
-    "scripts",
     "README.md",
     "pyproject.toml",
     "AGENTS.md",
 )
 
 SKIP_PARTS = frozenset({".git", "__pycache__", ".pytest_cache", "dist", "build", ".eggs"})
-SKIP_FILES = frozenset({"check_banned_terms.py"})
+SKIP_FILES = frozenset({"checkterms.py"})
 
 
 def _is_allowed_file(path: Path) -> bool:
@@ -57,24 +54,31 @@ def _iter_files(roots: Sequence[str]) -> Iterator[Path]:
             yield path
 
 
+def _scan_file(path: Path, terms: tuple[str, ...]) -> list[tuple[Path, str, int, str]]:
+    hits: list[tuple[Path, str, int, str]] = []
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return hits
+    lower = content.lower()
+    for term in terms:
+        if term not in lower:
+            continue
+        for lineno, line in enumerate(content.splitlines(), start=1):
+            if term not in line.lower():
+                continue
+            try:
+                rel = path.relative_to(ROOT)
+            except ValueError:
+                rel = path
+            hits.append((rel, term, lineno, line.strip()))
+    return hits
+
+
 def scan(roots: Sequence[str]) -> List[Tuple[Path, str, int, str]]:
     hits: List[Tuple[Path, str, int, str]] = []
     for path in sorted(_iter_files(roots)):
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        lower = text.lower()
-        for term in BANNED_TERMS:
-            if term not in lower:
-                continue
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                if term in line.lower():
-                    try:
-                        rel = path.relative_to(ROOT)
-                    except ValueError:
-                        rel = path
-                    hits.append((rel, term, lineno, line.strip()))
+        hits.extend(_scan_file(path, BANNED_TERMS))
     return hits
 
 

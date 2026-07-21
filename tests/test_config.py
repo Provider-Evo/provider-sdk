@@ -1,7 +1,7 @@
 """配置模型测试。"""
 
 from provider_sdk import Field, PluginConfigBase, ProviderPlugin
-from provider_sdk.config import build_plugin_default_config, merge_plugin_config_data
+from provider_sdk.core.config import build_plugin_default_config, merge_plugin_config_data
 
 
 class DemoConfig(PluginConfigBase):

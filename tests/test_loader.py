@@ -11,7 +11,7 @@ from provider_sdk.runtime.loader import PluginLoader, discover_plugin_dirs
 from provider_sdk.runtime.manager import PluginManager
 from provider_sdk.types.manifest import load_manifest_file
 
-EXAMPLES_ROOT = Path(__file__).resolve().parents[1] / "examples"
+EXAMPLES_ROOT = Path(__file__).resolve().parent / "examples"
 
 
 def test_parse_hello_manifest() -> None:
