@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,28 @@ def test_discover_examples() -> None:
     names = {d.name for d in dirs}
     assert "hello_plugin" in names
     assert "echo_platform" in names
+
+
+def test_load_underscore_manifest(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "demo_plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "_manifest.json").write_text(
+        json.dumps(
+            {
+                "id": "provider.demo-plugin",
+                "name": "Demo",
+                "version": "1.0.0",
+                "plugin_type": "general",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plugin_dir / "manifest.json").write_text("{}", encoding="utf-8")
+    (plugin_dir / "plugin.py").write_text("def create_plugin():\n    return None\n", encoding="utf-8")
+    manifest = load_manifest_file(plugin_dir)
+    assert manifest.id == "provider.demo-plugin"
+    dirs = discover_plugin_dirs(tmp_path)
+    assert [d.name for d in dirs] == ["demo_plugin"]
 
 
 @pytest.mark.asyncio

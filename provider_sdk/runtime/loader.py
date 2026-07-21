@@ -17,7 +17,11 @@ from provider_sdk.core.context import HostServices, create_plugin_context
 from provider_sdk.extensions.platform.adapter import PlatformAdapter
 from provider_sdk.extensions.platform.bridge import try_get_platform_adapter
 from provider_sdk.core.plugin import ProviderPlugin, is_provider_plugin
-from provider_sdk.types.manifest import PluginManifest, load_manifest_file
+from provider_sdk.types.manifest import (
+    PluginManifest,
+    load_manifest_file,
+    resolve_manifest_path,
+)
 
 __all__ = [
     "LoadedPlugin",
@@ -29,7 +33,6 @@ __all__ = [
 
 logger = logging.getLogger("provider_sdk.runtime.loader")
 
-_MANIFEST_NAME = "manifest.json"
 _ENTRY_MODULE = "plugin.py"
 _FACTORY_NAME = "create_plugin"
 
@@ -62,7 +65,11 @@ def discover_plugin_dirs(plugins_root: Path) -> List[Path]:
             continue
         if child.name.startswith(".") or child.name.startswith("_"):
             continue
-        if (child / _MANIFEST_NAME).is_file() and (child / _ENTRY_MODULE).is_file():
+        try:
+            resolve_manifest_path(child)
+        except FileNotFoundError:
+            continue
+        if (child / _ENTRY_MODULE).is_file():
             candidates.append(child)
     return candidates
 

@@ -8,9 +8,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
-__all__ = ["PluginManifest", "parse_manifest", "load_manifest_file"]
+__all__ = [
+    "PluginManifest",
+    "parse_manifest",
+    "load_manifest_file",
+    "resolve_manifest_path",
+]
 
-_MANIFEST_FILENAME = "manifest.json"
+_MANIFEST_FILENAMES = ("_manifest.json", "manifest.json")
 _PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,126}[a-z0-9]$")
 
 
@@ -96,11 +101,19 @@ def parse_manifest(data: Mapping[str, Any]) -> PluginManifest:
     )
 
 
+def resolve_manifest_path(plugin_dir: Path) -> Path:
+    """返回插件目录中的 manifest 文件路径（Provider-Evo 优先 ``_manifest.json``）。"""
+    for name in _MANIFEST_FILENAMES:
+        path = plugin_dir / name
+        if path.is_file():
+            return path
+    names = ", ".join(_MANIFEST_FILENAMES)
+    raise FileNotFoundError(f"缺少 manifest（{names}）: {plugin_dir}")
+
+
 def load_manifest_file(plugin_dir: Path) -> PluginManifest:
-    """从插件目录读取 ``manifest.json``。"""
-    path = plugin_dir / _MANIFEST_FILENAME
-    if not path.is_file():
-        raise FileNotFoundError(f"缺少 {_MANIFEST_FILENAME}: {plugin_dir}")
+    """从插件目录读取 manifest。"""
+    path = resolve_manifest_path(plugin_dir)
     with path.open("r", encoding="utf-8") as fh:
         data = json.load(fh)
     if not isinstance(data, Mapping):

@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
+from provider_sdk.types.manifest import resolve_manifest_path
+
 __all__ = ["install_plugin_from_git", "parse_git_url"]
 
 _REF_RE = re.compile(r"^[\w./-]+$")
@@ -81,9 +83,10 @@ def install_plugin_from_git(
         clone_dir = Path(tmp) / "repo"
         _git_clone(repo_url, git_ref, clone_dir)
 
-        manifest_path = clone_dir / "manifest.json"
-        if not manifest_path.is_file():
-            raise FileNotFoundError("仓库根目录缺少 manifest.json")
+        try:
+            manifest_path = resolve_manifest_path(clone_dir)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError("仓库根目录缺少 manifest") from exc
 
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
         pid = plugin_id or str(data.get("id") or "").strip()
