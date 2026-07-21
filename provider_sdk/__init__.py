@@ -21,7 +21,9 @@ from provider_sdk.types import (
     CONFIG_RELOAD_SCOPE_SELF,
 )
 
-__version__ = "0.3.2"
+from provider_sdk.model_ids import ModelIdRegistry, upstream_to_public_id
+
+__version__ = "0.3.4"
 
 __all__ = [
     "ProviderPlugin",
@@ -35,5 +37,7 @@ __all__ = [
     "collect_components",
     "CONFIG_RELOAD_SCOPE_SELF",
     "CONFIG_RELOAD_SCOPE_GLOBAL",
+    "ModelIdRegistry",
+    "upstream_to_public_id",
     "__version__",
 ]
