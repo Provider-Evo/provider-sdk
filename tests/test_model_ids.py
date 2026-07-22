@@ -52,12 +52,28 @@ class TestModelIdRegistry:
             ["qwen3.7-plus", "qwen3-7-plus", "qwen3-max"]
         )
         assert p2u["qwen3-7-plus"] == "qwen3.7-plus"
-        assert p2u["qwen3.7-plus"] == "qwen3.7-plus"
+        assert "qwen3.7-plus" not in p2u
         assert "qwen3-7-plus-1df11e" not in p2u or p2u.get("qwen3-7-plus") == "qwen3.7-plus"
 
         # 公开名在前，真实上游在后 → 夺回映射
         _pub2, p2u2, _ = build_model_id_maps(["qwen3-7-plus", "qwen3.7-plus"])
         assert p2u2["qwen3-7-plus"] == "qwen3.7-plus"
+        assert "qwen3.7-plus" not in p2u2
+
+    def test_no_upstream_alias_identity_in_public_to_upstream(self):
+        from provider_sdk.types.model_ids import build_model_id_maps
+
+        public, p2u, u2p = build_model_id_maps(
+            ["qwen3.7-plus", "qwen3.8-max-preview", "qwen3-max"]
+        )
+        assert set(public) == {"qwen3-7-plus", "qwen3-8-max-preview", "qwen3-max"}
+        assert p2u == {
+            "qwen3-7-plus": "qwen3.7-plus",
+            "qwen3-8-max-preview": "qwen3.8-max-preview",
+            "qwen3-max": "qwen3-max",
+        }
+        assert u2p["qwen3.7-plus"] == "qwen3-7-plus"
+        assert u2p["qwen3.8-max-preview"] == "qwen3-8-max-preview"
 
     def test_registry_normalize_public_before_register(self):
         reg = ModelIdRegistry("test", persist=False)

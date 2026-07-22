@@ -79,6 +79,22 @@ def upstream_to_public_id(
     return _VERSION_DOT.sub(r"\1-\2", upstream)
 
 
+def _compact_public_to_upstream(
+    public_to_upstream: Dict[str, str],
+    upstream_to_public: Dict[str, str],
+) -> Dict[str, str]:
+    """去掉上游别名的 identity 条目，仅保留规范公开名映射。"""
+    compact: Dict[str, str] = {}
+    for public, upstream in public_to_upstream.items():
+        if public != upstream:
+            compact[public] = upstream
+            continue
+        canonical = upstream_to_public.get(public, public)
+        if canonical == public:
+            compact[public] = upstream
+    return compact
+
+
 def build_model_id_maps(
     upstream_ids: Iterable[str],
     *,
@@ -96,6 +112,8 @@ def build_model_id_maps(
 
     for upstream in upstream_ids:
         if not upstream:
+            continue
+        if upstream in upstream_to_public:
             continue
         # 若该 ID 已是某真实上游的公开名，跳过（避免 public 被当 upstream 二次注册）
         existing = public_to_upstream.get(upstream)
@@ -116,19 +134,15 @@ def build_model_id_maps(
             pass
 
         public_to_upstream[public] = upstream
-        # 上游原名自映射，便于 resolve(upstream) 直通；禁止覆盖已有 public→upstream
-        if upstream not in public_to_upstream:
-            public_to_upstream[upstream] = upstream
-        elif public_to_upstream[upstream] in (upstream, public):
-            public_to_upstream[upstream] = upstream
-        # else: upstream 键已指向另一真实上游的公开映射，保留
-
         upstream_to_public[upstream] = public
         if public not in seen_public:
             seen_public.add(public)
             public_ids.append(public)
         elif public_ids and public not in public_ids:
             public_ids.append(public)
+    public_to_upstream = _compact_public_to_upstream(
+        public_to_upstream, upstream_to_public
+    )
     return public_ids, public_to_upstream, upstream_to_public
 
 
@@ -190,8 +204,14 @@ class ModelIdRegistry:
                         seen.add(public)
                         rebuilt.append(public)
                 self._public_ids = rebuilt
+            self._compact_maps()
         except Exception:
             return
+
+    def _compact_maps(self) -> None:
+        self._public_to_upstream = _compact_public_to_upstream(
+            self._public_to_upstream, self._upstream_to_public
+        )
 
     def save(self) -> None:
         if not self._persist:
@@ -246,6 +266,7 @@ class ModelIdRegistry:
                 continue
             self._public_to_upstream[key] = value
         self._upstream_to_public.update(u2p)
+        self._compact_maps()
         # 合并公开列表（保序去重），而非整表替换
         merged: List[str] = []
         seen: set[str] = set()
