@@ -84,7 +84,10 @@ def build_model_id_maps(
     *,
     display_names: Optional[Mapping[str, str]] = None,
 ) -> tuple[List[str], Dict[str, str], Dict[str, str]]:
-    """从上游 ID 列表构建公开 ID 列表与双向映射。"""
+    """从上游 ID 列表构建公开 ID 列表与双向映射。
+
+    不会用「已是公开名」的伪 upstream 覆盖既有 public→真实 upstream 映射。
+    """
     public_ids: List[str] = []
     public_to_upstream: Dict[str, str] = {}
     upstream_to_public: Dict[str, str] = {}
@@ -94,15 +97,37 @@ def build_model_id_maps(
     for upstream in upstream_ids:
         if not upstream:
             continue
+        # 若该 ID 已是某真实上游的公开名，跳过（避免 public 被当 upstream 二次注册）
+        existing = public_to_upstream.get(upstream)
+        if existing is not None and existing != upstream:
+            continue
+
         public = upstream_to_public_id(upstream, display_name=names.get(upstream))
-        if public in seen_public and public_to_upstream.get(public) != upstream:
+        if public in seen_public and public_to_upstream.get(public) not in (
+            None,
+            upstream,
+            public,
+        ):
+            # 另一真实上游已占用此公开名 → 加后缀，且不得回写覆盖原映射
             suffix = hashlib.sha256(upstream.encode("utf-8")).hexdigest()[:6]
             public = f"{public}-{suffix}"
+        elif public in seen_public and public_to_upstream.get(public) == public:
+            # 公开名曾被错误地 identity 映射；真实上游到来时夺回该公开名
+            pass
+
         public_to_upstream[public] = upstream
-        public_to_upstream[upstream] = upstream
+        # 上游原名自映射，便于 resolve(upstream) 直通；禁止覆盖已有 public→upstream
+        if upstream not in public_to_upstream:
+            public_to_upstream[upstream] = upstream
+        elif public_to_upstream[upstream] in (upstream, public):
+            public_to_upstream[upstream] = upstream
+        # else: upstream 键已指向另一真实上游的公开映射，保留
+
         upstream_to_public[upstream] = public
         if public not in seen_public:
             seen_public.add(public)
+            public_ids.append(public)
+        elif public_ids and public not in public_ids:
             public_ids.append(public)
     return public_ids, public_to_upstream, upstream_to_public
 
@@ -144,9 +169,27 @@ class ModelIdRegistry:
                 self._public_to_upstream.update(
                     {str(k): str(v) for k, v in raw.items() if k and v}
                 )
-                for public, upstream in raw.items():
+                for public, upstream in list(self._public_to_upstream.items()):
                     if public != upstream:
                         self._upstream_to_public[str(upstream)] = str(public)
+                    else:
+                        # identity 条目：仅当它不是「另一公开名的上游别名」时记入
+                        self._upstream_to_public.setdefault(str(upstream), str(public))
+            models = data.get("public_models")
+            if isinstance(models, list) and models:
+                self._public_ids = [str(m) for m in models if m]
+            elif self._public_to_upstream:
+                # 兼容旧文件：从映射重建公开列表（去重、跳过纯上游别名键）
+                seen: set[str] = set()
+                rebuilt: List[str] = []
+                for public, upstream in self._public_to_upstream.items():
+                    if public == upstream and public in self._upstream_to_public:
+                        # 上游自映射键，公开名在 upstream_to_public 里
+                        continue
+                    if public not in seen:
+                        seen.add(public)
+                        rebuilt.append(public)
+                self._public_ids = rebuilt
         except Exception:
             return
 
@@ -167,20 +210,83 @@ class ModelIdRegistry:
         except Exception:
             return
 
+    def _normalize_upstream_ids(
+        self,
+        upstream_ids: Iterable[str],
+    ) -> List[str]:
+        """把误传入的公开名还原为真实上游，并去重。"""
+        out: List[str] = []
+        seen: set[str] = set()
+        for uid in upstream_ids:
+            if not uid:
+                continue
+            mapped = self._public_to_upstream.get(uid)
+            if mapped and mapped != uid:
+                uid = mapped
+            if uid in seen:
+                continue
+            seen.add(uid)
+            out.append(uid)
+        return out
+
     def register_many(
         self,
         upstream_ids: Iterable[str],
         *,
         display_names: Optional[Mapping[str, str]] = None,
     ) -> List[str]:
+        cleaned = self._normalize_upstream_ids(upstream_ids)
         public_ids, p2u, u2p = build_model_id_maps(
-            upstream_ids, display_names=display_names
+            cleaned, display_names=display_names
         )
-        self._public_to_upstream.update(p2u)
+        # 合并映射：禁止 identity 覆盖已有真实映射
+        for key, value in p2u.items():
+            existing = self._public_to_upstream.get(key)
+            if existing is not None and existing != key and value == key:
+                continue
+            self._public_to_upstream[key] = value
         self._upstream_to_public.update(u2p)
-        self._public_ids = public_ids
+        # 合并公开列表（保序去重），而非整表替换
+        merged: List[str] = []
+        seen: set[str] = set()
+        for pid in list(self._public_ids) + public_ids:
+            if pid and pid not in seen:
+                seen.add(pid)
+                merged.append(pid)
+        self._public_ids = merged
         self.save()
-        return list(public_ids)
+        return list(self._public_ids)
+
+    def register_merge(
+        self,
+        upstream_ids: Iterable[str],
+        *,
+        fallback: Optional[Iterable[str]] = None,
+        display_names: Optional[Mapping[str, str]] = None,
+    ) -> List[str]:
+        """合并持久化映射、fallback 与动态列表，去重注册，返回完整公开模型列表。"""
+        seen: set[str] = set()
+        merged: List[str] = []
+        for upstream in self._upstream_to_public.keys():
+            if upstream and upstream not in seen:
+                seen.add(upstream)
+                merged.append(upstream)
+        for upstream in self._public_to_upstream.values():
+            if upstream and upstream not in seen:
+                seen.add(upstream)
+                merged.append(upstream)
+        for batch in (fallback, upstream_ids):
+            if not batch:
+                continue
+            for model in batch:
+                if not model:
+                    continue
+                upstream = self.resolve_upstream(str(model))
+                if upstream not in seen:
+                    seen.add(upstream)
+                    merged.append(upstream)
+        self.register_many(merged, display_names=display_names)
+        return list(self._public_ids)
 
     def register_catalog(
         self,
@@ -223,11 +329,12 @@ class ModelIdRegistry:
 
     def merge_fallback(self, upstream_ids: Iterable[str]) -> List[str]:
         """合并静态兜底列表，不覆盖已有映射。"""
-        existing_upstream = {
-            v for k, v in self._public_to_upstream.items() if k != v
-        }
+        existing_upstream = set(self._upstream_to_public.keys())
+        for key, value in self._public_to_upstream.items():
+            existing_upstream.add(value)
         merged = list(existing_upstream)
         for upstream in upstream_ids:
-            if upstream and upstream not in merged:
+            if upstream and upstream not in existing_upstream:
                 merged.append(upstream)
+                existing_upstream.add(upstream)
         return self.register_many(merged)
